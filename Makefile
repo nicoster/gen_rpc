@@ -1,149 +1,59 @@
-#
-# Copyright 2015 Panagiotis Papadomitsos. All Rights Reserved.
-#
-# Build targets:
-#
-# all: 			    rebar3 as dev do compile
-# shell:		    rebar3 as dev do shell
-# clean: 		    rebar3 as dev do clean
-# distclean:        rebar3 as dev do clean -a
-#                   and explicitly delete other build artifacts
-# test: 		    rebar3 as test do ct -v, cover
-# coveralls:        Send coverage to coveralls.io
-# dialyzer:         rebar3 as test do dialyzer
-# xref:             rebar3 as dev do xref
-# dist:             rebar3 as test do compile, ct -v -c, xref, dialyzer, cover
-# spec:             Runs typer to generate source code specs
-# rebar:            Downloads a precompiled rebar3 binary and places it inside the project. The rebar binary is .gitignored.
-#                   This step is always run first on build targets.
-# tags:             Builds Emacs tags file
-# epmd:             Runs the Erlang port mapper daemon, required for running the app and tests
-#
+.PHONY: all get-deps clean compile run eunit doc
 
-# .DEFAULT_GOAL can be overridden in custom.mk if "all" is not the desired
-# default
-
-.DEFAULT_GOAL := all
-
-# Build targets
-.PHONY: all test dialyzer xref spec dist coveralls
-
-# Run targets
-.PHONY: shell
-
-# Misc targets
-.PHONY: clean testclean distclean tags rebar
-
-PROJ = $(shell ls -1 src/*.src | sed -e 's/src//' | sed -e 's/\.app\.src//' | tr -d '/')
-
-# =============================================================================
-# verify that the programs we need to run are installed on this system
-# =============================================================================
-ERL = $(shell which erl)
-TYPER = $(shell which typer)
-
-ifeq ($(ERL),)
-$(error "Erlang not available on this system")
+# determine which Rebar we want to be running
+REBAR2=$(shell which rebar || echo ./rebar)
+REBAR3=$(shell which rebar3)
+ifeq ($(FORCE_REBAR2),true)
+ REBAR=$(REBAR2)
+ REBAR_VSN=2
+else ifeq ($(REBAR3),)
+ REBAR=$(REBAR2)
+ REBAR_VSN=2
+else
+ REBAR=$(REBAR3)
+ REBAR_VSN=3
 endif
 
-# If there is a rebar in the current directory, use it
-ifeq ($(wildcard rebar3),rebar3)
-REBAR = $(CURDIR)/rebar3
+all: get-deps compile
+
+get-deps:
+ifeq ($(REBAR_VSN),2)
+	@$(REBAR) get-deps
 endif
 
-# And finally, prep to download rebar if all else fails
-ifeq ($(REBAR),)
-REBAR = $(CURDIR)/rebar3
-endif
-
-REBAR_URL = https://s3.amazonaws.com/rebar3/rebar3
-
-OTP_RELEASE = $(shell escript otp-release.escript)
-
-PLT_FILE = $(CURDIR)/_plt/rebar3_$(OTP_RELEASE)_plt
-
-COVERDATA = $(CURDIR)/_build/test/ct.coverdata
-
-# ======================
-# Integration test logic
-# ======================
-ifneq ($(shell which docker 2> /dev/null),)
-
-NODES ?= 3
-IMAGE = $(shell docker images -q gen_rpc:integration 2> /dev/null)
-
-image:
-ifeq ($(IMAGE),)
-	@cd test/integration && docker build --rm --pull -t gen_rpc:integration .
-endif
-
-integration: image
-	@export NODES=$(NODES) && cd test/integration && bash -c "./integration-tests.sh $(NODES)"
-
-endif
-
-# =============================================================================
-# Build targets
-# =============================================================================
-
-all: $(REBAR)
-	@REBAR_PROFILE=dev $(REBAR) do compile
-
-test: $(REBAR) epmd
-	@REBAR_PROFILE=test $(REBAR) do ct -c, cover
-
-dialyzer: $(REBAR) $(PLT_FILE)
-	@REBAR_PROFILE=dev $(REBAR) do dialyzer
-
-xref: $(REBAR)
-	@REBAR_PROFILE=dev $(REBAR) do xref
-
-spec: dialyzer
-	@$(TYPER) --annotate-inc-files -I ./include --plt $(PLT_FILE) -r src/
-
-dist: $(REBAR) test
-	@REBAR_PROFILE=dev $(REBAR) do dialyzer, xref
-
-coveralls: $(COVERDATA)
-	@REBAR_PROFILE=test $(REBAR) do coveralls send || true
-
-# =============================================================================
-# Run targets
-# =============================================================================
-
-shell: $(REBAR) epmd
-	@REBAR_PROFILE=dev $(REBAR) do shell --name gen_rpc@127.0.0.1 --config test/gen_rpc.config
-
-# =============================================================================
-# Misc targets
-# =============================================================================
-
-clean: $(REBAR)
+clean:
 	@$(REBAR) clean
-	@rm -f rebar.lock
 
-distclean: $(REBAR)
-	@rm -rf _build _plt .rebar Mnesia* mnesia* log/ data/ temp-data/ rebar.lock
-	@find . -name erl_crash.dump -type f -delete
-	@$(REBAR) clean -a
+compile:
+	@$(REBAR) compile
 
-testclean:
-	@rm -fr _build/test && rm -rf ./test/*.beam
-	@find log/ct -maxdepth 1 -name ct_run* -type d -cmin +360 -exec rm -fr {} \; 2> /dev/null || true
+run:
+ifeq ($(REBAR_VSN),2)
+	erl -pa deps/*/ebin -pa ./ebin
+else
+	$(REBAR) shell
+endif
 
-epmd:
-	@pgrep epmd 2> /dev/null > /dev/null || epmd -daemon || true
+eunit:
+ifeq ($(REBAR_VSN),2)
+	@$(REBAR) compile
+	@$(REBAR) eunit skip_deps=true
+else
+	@$(REBAR) eunit
+endif
 
-$(REBAR):
-	@curl -Lo rebar3 $(REBAR_URL) || wget $(REBAR_URL)
-	@chmod a+x rebar3
-	@$(CURDIR)/rebar3 update
+doc:
+ifeq ($(REBAR_VSN),2)
+	@$(REBAR) doc skip_deps=true
+else
+	@$(REBAR) edoc
+endif
 
-tags:
-	find src _build/default/lib -name "*.[he]rl" -print | etags -
-
-$(COVERDATA):
-	@$(MAKE) test
-
-$(PLT_FILE):
-	@REBAR_PROFILE=dev $(REBAR) do dialyzer || true
+# The "install" step for Travis
+travis-install:
+ifeq ($(FORCE_REBAR2),true)
+	rebar get-deps
+else
+	wget https://s3.amazonaws.com/rebar3/rebar3
+	chmod a+x rebar3
+endif
