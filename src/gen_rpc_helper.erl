@@ -76,8 +76,15 @@ peer_to_string({A,B,C,D} = IpAddress) when is_integer(A), is_integer(B), is_inte
 -spec host_from_node(node()) -> string().
 host_from_node(Node) when is_atom(Node) ->
     NodeStr = atom_to_list(Node),
-    [_Name, Host] = string:tokens(NodeStr, [$@]),
-    Host.
+    case string:tokens(NodeStr, [$@]) of
+        [_Name, Shard] ->
+            case application:get_env(?APP, client_config_per_node) of
+                {ok, {M, F}} -> M:F(Shard);
+                _ -> Shard
+            end;
+        _ ->
+            ""
+    end.
 
 %% Taken from prim_inet.  We are merely copying some socket options from the
 %% listening socket to the new acceptor socket.

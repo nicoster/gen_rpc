@@ -359,15 +359,19 @@ terminate(_Reason, _State) ->
 %%% ===================================================
 connect_to_tcp_server(Node) ->
     Host = gen_rpc_helper:host_from_node(Node),
-    Port = gen_rpc_helper:get_remote_tcp_server_port(Node),
-    case gen_tcp:connect(Host, Port, gen_rpc_helper:default_tcp_opts(?DEFAULT_TCP_OPTS), ?TCP_SERVER_CONN_TIMEOUT) of
-        {ok, Socket} ->
-            ok = lager:debug("event=connecting_to_server peer=\"~s\" socket=\"~p\" result=success", [Node, Socket]),
-            {ok, {IpAddress, _Port}} = inet:peername(Socket),
-            get_node_port(Socket, IpAddress);
-        {error, Reason} ->
-            ok = lager:error("event=connecting_to_server peer=\"~s\" result=failure reason=\"~p\"", [Node, Reason]),
-            {error, Reason}
+    case Host of
+        "" -> {error, <<"cannot resolve host for ", (atom_to_binary(Node, utf8))/binary>>};
+        _ ->
+            Port = gen_rpc_helper:get_remote_tcp_server_port(Node),
+            case gen_tcp:connect(Host, Port, gen_rpc_helper:default_tcp_opts(?DEFAULT_TCP_OPTS), ?TCP_SERVER_CONN_TIMEOUT) of
+                {ok, Socket} ->
+                    ok = lager:debug("event=connecting_to_server peer=\"~s\" socket=\"~p\" result=success", [Node, Socket]),
+                    {ok, {IpAddress, _Port}} = inet:peername(Socket),
+                    get_node_port(Socket, IpAddress);
+                {error, Reason} ->
+                    ok = lager:error("event=connecting_to_server peer=\"~s\" result=failure reason=\"~p\"", [Node, Reason]),
+                    {error, Reason}
+            end
     end.
 
 get_node_port(Socket, IpAddress) ->
