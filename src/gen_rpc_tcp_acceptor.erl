@@ -14,6 +14,7 @@
 
 %%% Include this library's name macro
 -include("app.hrl").
+-include("tcp.hrl").
 
 %%% Receive timeout for lingering clients
 -define(RECEIVE_TIMEOUT, 5000).

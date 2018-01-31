@@ -14,6 +14,7 @@
 
 %%% Include this library's name macro
 -include("app.hrl").
+-include("tcp.hrl").
 
 %%% Local state
 -record(state, {socket :: port(),
@@ -43,7 +44,7 @@ stop() ->
 init({}) ->
     _OldVal = erlang:process_flag(trap_exit, true),
     {ok, Port} = application:get_env(?APP, tcp_server_port),
-    Result = gen_tcp:listen(Port, gen_rpc_helper:default_tcp_opts(?DEFAULT_TCP_OPTS)),
+    Result = gen_tcp:listen(Port, gen_rpc_helper:default_tcp_opts(?TCP_DEFAULT_OPTS)),
     case application:get_env(?APP, on_init_server) of
         {ok, {M, F}} -> M:F(Result);
         _ -> ok

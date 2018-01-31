@@ -17,13 +17,16 @@
 %%% Include helpful guard macros
 -include("guards.hrl").
 
+-include("tcp.hrl").
+
 %%% Connection and reply timeouts from the TCP server
 -define(TCP_SERVER_CONN_TIMEOUT, 5000).
 -define(TCP_SERVER_SEND_TIMEOUT, 5000).
 -define(TCP_SERVER_RECV_TIMEOUT, 5000).
+-define(KEEPALIVE_PING_INTERVAL, get_env(keepalive_ping_interval, 2500)).
 
 %%% Local state
--record(state, {socket :: port()}).
+-record(state, {socket :: port(), node :: atom()}).
 
 %%% Supervisor functions
 -export([start_link/1, stop/1]).
@@ -45,6 +48,12 @@
 
 %%% Process exports
 -export([async_call_worker/5, cast_worker/4]).
+
+get_env(Name, Default) ->
+    case application:get_env(?APP, Name) of
+        undefined -> Default;
+        {ok, Val} -> Val
+    end.
 
 %%% ===================================================
 %%% Supervisor functions
@@ -224,11 +233,12 @@ init({Node}) ->
         {ok, IpAddress, Port} ->
             ok = lager:debug("event=remote_server_started_successfully server_node=\"~s\" remote_port=\"~B\"", [Node, Port]),
             ConnTO = gen_rpc_helper:get_connect_timeout(),
-            case gen_tcp:connect(IpAddress, Port, gen_rpc_helper:default_tcp_opts(?DEFAULT_TCP_OPTS), ConnTO) of
+            case gen_tcp:connect(IpAddress, Port, gen_rpc_helper:default_tcp_opts(?TCP_DEFAULT_OPTS), ConnTO) of
                 {ok, Socket} ->
                     ok = lager:debug("event=connecting_to_server server_node=\"~s\" peer=\"~s\" result=success",
                                      [Node, gen_rpc_helper:peer_to_string({IpAddress, Port})]),
-                    {ok, #state{socket=Socket}, gen_rpc_helper:get_inactivity_timeout(?MODULE)};
+                    erlang:send_after(?KEEPALIVE_PING_INTERVAL, self(), keepalive),
+                    {ok, #state{socket=Socket, node = Node}, gen_rpc_helper:get_inactivity_timeout(?MODULE)};
                 {error, Reason} ->
                     ok = lager:error("event=connecting_to_server server_node=\"~s\" server_ip=\"~s:~B\" result=failure reason=\"~p\"",
                                      [Node, gen_rpc_helper:peer_to_string({IpAddress, Port}), Reason]),
@@ -308,6 +318,18 @@ handle_cast(Msg, State) ->
     ok = lager:critical("event=uknown_cast_received socket=\"~p\" message=\"~p\" action=stopping", [State#state.socket, Msg]),
     {stop, {unknown_cast, Msg}, State}.
 
+handle_info(keepalive, State) ->
+    lager:debug("rpc, send keepalive call, ~p", [State#state.node]),
+    Self = self(),
+    spawn(
+        fun() ->
+            gen_server:call(Self, {{call, erlang, node, []},
+                gen_rpc_helper:get_send_timeout(undefined)},
+                gen_rpc_helper:get_call_receive_timeout(undefined))
+        end),
+    erlang:send_after(?KEEPALIVE_PING_INTERVAL, Self, keepalive),
+    {noreply, State, gen_rpc_helper:get_inactivity_timeout(?MODULE)};
+
 %% Handle any TCP packet coming in
 handle_info({tcp,Socket,Data}, #state{socket=Socket} = State) ->
     _Reply = try erlang:binary_to_term(Data) of
@@ -363,7 +385,7 @@ connect_to_tcp_server(Node) ->
         "" -> {error, <<"cannot resolve host for ", (atom_to_binary(Node, utf8))/binary>>};
         _ ->
             Port = gen_rpc_helper:get_remote_tcp_server_port(Node),
-            case gen_tcp:connect(Host, Port, gen_rpc_helper:default_tcp_opts(?DEFAULT_TCP_OPTS), ?TCP_SERVER_CONN_TIMEOUT) of
+            case gen_tcp:connect(Host, Port, gen_rpc_helper:default_tcp_opts(?TCP_DEFAULT_OPTS), ?TCP_SERVER_CONN_TIMEOUT) of
                 {ok, Socket} ->
                     ok = lager:debug("event=connecting_to_server peer=\"~s\" socket=\"~p\" result=success", [Node, Socket]),
                     {ok, {IpAddress, _Port}} = inet:peername(Socket),

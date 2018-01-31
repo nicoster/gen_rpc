@@ -14,6 +14,7 @@
 
 %%% Include this library's name macro
 -include("app.hrl").
+-include("tcp.hrl").
 
 %%% Local state
 -record(state, {socket :: port(),
@@ -55,7 +56,7 @@ get_port(Pid) when is_pid(Pid) ->
 %%% ===================================================
 init({Peer}) ->
     _OldVal = erlang:process_flag(trap_exit, true),
-    case gen_tcp:listen(0, gen_rpc_helper:default_tcp_opts(?DEFAULT_TCP_OPTS)) of
+    case gen_tcp:listen(0, gen_rpc_helper:default_tcp_opts(?TCP_DEFAULT_OPTS)) of
         {ok, Socket} ->
             ok = lager:info("event=listener_started_successfully peer=\"~s\"",
                             [gen_rpc_helper:peer_to_string(Peer)]),

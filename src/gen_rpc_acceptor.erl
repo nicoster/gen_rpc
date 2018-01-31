@@ -14,6 +14,8 @@
 
 %%% Include this library's name macro
 -include("app.hrl").
+%%% Include TCP macros
+-include("tcp.hrl").
 
 %%% Local state
 -record(state, {socket = undefined :: port() | undefined,
@@ -73,8 +75,7 @@ waiting_for_socket({socket_ready, Socket}, #state{peer=Peer} = State) ->
     % Now we own the socket
     ok = lager:debug("event=acquiring_socket_ownership socket=\"~p\" peer=\"~p\"",
                      [Socket, gen_rpc_helper:peer_to_string(Peer)]),
-    ok = inet:setopts(Socket, [{send_timeout, gen_rpc_helper:get_send_timeout(undefined)}|
-                      gen_rpc_helper:default_tcp_opts(?ACCEPTOR_DEFAULT_TCP_OPTS)]),
+    ok = set_acceptor_opts(Socket),
     {next_state, waiting_for_data, State#state{socket=Socket}}.
 
 waiting_for_data({data, Data}, #state{socket=Socket,peer=Peer,control=Control,list=List} = State) ->
@@ -216,3 +217,36 @@ is_allowed(Module, whitelist, List) when is_atom(Module) ->
 
 is_allowed(Module, blacklist, List) when is_atom(Module) ->
     not sets:is_element(Module, List).
+
+
+-spec set_acceptor_opts(port()) -> ok.
+set_acceptor_opts(Socket) when is_port(Socket) ->
+    ok = set_socket_keepalive(os:type(), Socket),
+    ok = inet:setopts(Socket, [{send_timeout, gen_rpc_helper:get_send_timeout(undefined)}|?ACCEPTOR_DEFAULT_TCP_OPTS]),
+    ok.
+
+%%% ===================================================
+%%% Private functions
+%%% ===================================================
+set_socket_keepalive({unix, darwin}, Socket) ->
+    {ok, KeepIdle} = application:get_env(?APP, socket_keepalive_idle),
+    {ok, KeepInterval} = application:get_env(?APP, socket_keepalive_interval),
+    {ok, KeepCount} = application:get_env(?APP, socket_keepalive_count),
+    ok = inet:setopts(Socket, [{raw, ?DARWIN_SOL_SOCKET, ?DARWIN_SO_KEEPALIVE, <<1:32/native>>}]),
+    ok = inet:setopts(Socket, [{raw, ?DARWIN_SOL_SOCKET, ?DARWIN_TCP_KEEPIDLE, <<KeepIdle:32/native>>}]),
+    ok = inet:setopts(Socket, [{raw, ?DARWIN_SOL_SOCKET, ?DARWIN_TCP_KEEPINTVL, <<KeepInterval:32/native>>}]),
+    ok = inet:setopts(Socket, [{raw, ?DARWIN_SOL_SOCKET, ?DARWIN_TCP_KEEPCNT, <<KeepCount:32/native>>}]),
+    ok;
+
+set_socket_keepalive({unix, linux}, Socket) ->
+    {ok, KeepIdle} = application:get_env(?APP, socket_keepalive_idle),
+    {ok, KeepInterval} = application:get_env(?APP, socket_keepalive_interval),
+    {ok, KeepCount} = application:get_env(?APP, socket_keepalive_count),
+    ok = inet:setopts(Socket, [{raw, ?LINUX_SOL_SOCKET, ?LINUX_SO_KEEPALIVE, <<1:32/native>>}]),
+    ok = inet:setopts(Socket, [{raw, ?LINUX_SOL_SOCKET, ?LINUX_TCP_KEEPIDLE, <<KeepIdle:32/native>>}]),
+    ok = inet:setopts(Socket, [{raw, ?LINUX_SOL_SOCKET, ?LINUX_TCP_KEEPINTVL, <<KeepInterval:32/native>>}]),
+    ok = inet:setopts(Socket, [{raw, ?LINUX_SOL_SOCKET, ?LINUX_TCP_KEEPCNT, <<KeepCount:32/native>>}]),
+    ok;
+
+set_socket_keepalive(_Unsupported, _Socket) ->
+    ok.
