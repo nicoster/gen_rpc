@@ -20,7 +20,7 @@
 -record(state, {socket :: port(),
         peer :: tuple(),
         acceptor_pid :: pid(),
-        acceptor :: prim_inet:insock()}).
+        acceptor :: integer()}).    %% Ref
 
 %%% Supervisor functions
 -export([start_link/1, stop/1]).

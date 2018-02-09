@@ -18,7 +18,7 @@
 
 %%% Local state
 -record(state, {socket :: port(),
-        acceptor :: prim_inet:insock()}).
+        acceptor :: integer()}).
 
 %%% Supervisor functions
 -export([start_link/0, stop/0]).
